@@ -1,0 +1,744 @@
+---
+title: "REGRESSION ANALYSIS"
+author: "Matthew Nartey & Isaac Gbene"
+date: "`r Sys.Date()`"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(broom)
+library(car)            # VIF
+library(ResourceSelection) # Hosmer-Lemeshow (optional)
+library(pROC)           # ROC/AUC (optional)
+
+```
+
+
+```{r, echo=TRUE}
+#setwd("C:/Users/Matthew.Nartey/Desktop/Reg 2 Final-Mathew&Isaac")
+setwd("C:/Users/Matthew.Nartey/Desktop/Reg 2 Final-Mathew&Isaac")
+
+
+library(readr)
+#navc <- read.csv("navc.csv")
+#View(navc)
+str(navc)
+summary(navc)
+head(navc)
+
+```
+
+```{r}
+setwd("C:/Users/Matthew.Nartey/Desktop/Reg 2 Final-Mathew&Isaac")
+navc <- read.csv("navc.csv")
+```
+
+### Discussion
+The dataset contains 323 campaigns observed between 1902 and 2006 (median year 1977). Outcomes are coded as failure (0), partial success (0.5), and full success (1), with a median of 0.5 and mean 0.43, indicating that full victories are less common than failures and partial gains. Approximately one-third of campaigns are nonviolent, while the remainder involve violence. The political context is generally non-democratic: democracy scores range from −10 to 10 with a median of −3, and about 17% of campaigns lack democracy data. International sanctions, foreign aid, and broader international support are present for 18%, 32%, and 27% of campaigns, respectively. Violent state repression is widespread (about 88% of campaigns), whereas security force defections occur in roughly 27% of cases, with very little missing data. Campaign durations are highly skewed, ranging from 2 days to nearly 58 years (median 2 years, mean 5.3 years). 
+
+
+### Data Cleaning
+```{r, echo=TRUE}
+# For models that include democracy
+navc_clean <- navc[!is.na(navc$democracy), ] # drop the rows that have NA democracy if any model doesn't include democracy we leave the data intact
+View(navc_clean)
+nrow(navc_clean)
+
+nrow(navc_clean)
+summary(navc_clean[, c("year", "outcome", "democracy", "duration")])
+table(navc_clean$nonviol)
+
+
+
+```
+### Data Cleaning justification
+
+The democracy variable contained 54 missing values (approximately 17% of all observations). Since democracy is a key explanatory variable included in all regression models, observations with missing democracy scores were removed using listwise deletion. This resulted in a final sample of 269 campaigns with complete information on all variables used in the models. Missingness in other predictors was negligible and did not require additional treatment.
+
+### Disccusion after cleaning the data
+After restricting the sample to campaigns with non-missing democracy scores and to cases with clearly defined outcomes of either complete failure (0) or complete success (1), the dataset consists of 269 campaigns. These campaigns span the period from 1902 to 2006, with a median year of 1973 (interquartile range 1948–1990), indicating that most observations are concentrated in the mid- to late-20th century. In this binary outcome sample, 174 campaigns (approximately 65%) ended in failure, while 95 (about 35%) were fully successful. Democracy scores range from −10 (most autocratic) to +10 (most democratic), with a median of −3 and a mean of −1.22, suggesting that campaigns in the dataset tend to occur in relatively non-democratic contexts, though there is substantial variation across regimes. Campaign durations vary from 2 days to roughly 47 years (17,155 days), with a median of 730 days (about 2 years) and a mean of 1,575 days (about 4.3 years), indicating a highly right-skewed distribution. This skewness motivates modeling duration on the log scale in subsequent regression analyses.
+
+### Outcome distribution
+
+```{r, echo=TRUE}
+
+# We want to know the proportions of the response variables present in the data
+navc_clean$outcome_cat <- factor(navc_clean$outcome,
+                               levels = c(0, 0.5, 1),
+                               labels = c("failure", "partial", "success"),
+                               ordered = TRUE)
+
+table(navc_clean$outcome_cat)
+prop.table(table(navc_clean$outcome_cat))
+
+
+```
+### Outcome by nonviolence
+```{r}
+
+table(navc_clean$nonviol, navc_clean$outcome_cat)
+prop.table(table(navc_clean$nonviol, navc_clean$outcome_cat), 1)  # row proportions
+
+ggplot(navc_clean, aes(x = nonviol, fill = outcome_cat)) +
+  geom_bar(position = "fill") +
+  ylab("Proportion") +
+  xlab("Campaign type") +
+  scale_y_continuous(labels = scales::percent) +
+  ggtitle("Outcome distribution by campaign type")
+
+
+```
+### Comment
+The stacked bar chart shows that nonviolent campaigns have much higher full and partial success rates and far fewer failures compared to violent campaigns, indicating a strong descriptive advantage for nonviolent resistance movements.
+
+
+
+#Outcome by democracy
+```{r, echo=FALSE}
+
+ggplot(navc_clean, aes(x = outcome_cat, y = democracy)) +
+  geom_boxplot() +
+  labs(x="Outcome", y="Democracy score", title="Democracy by outcome")
+
+```
+
+## Discussion 
+
+The box plot above shows that the democracy variable only does not explicitly explain our outcome variable even though it contains a very important information for modeling. Democracy combined with other variables as an interction term is recommended, also including the democracy variable in all models will be meaningful.
+
+
+
+
+##  Duration distribution + log transform
+```{r}
+
+navc_clean$log_duration <- log(navc_clean$duration)
+
+ggplot(navc_clean, aes(x = duration)) + geom_histogram(bins=30) +
+  labs(title="Campaign duration (raw)")
+
+ggplot(navc_clean, aes(x = log_duration)) + geom_histogram(bins=30) +
+  labs(title="Campaign duration (log scale)")
+
+
+
+```
+## Discussion
+Looking at the distribution of the raw data distribution, it is heavily rightly skewed which implies that most duration is centered around zero. In other to make more meaning of the duration we took a logtransformation of the duration and the distribution looks more symmetrical and meaningfull therefore the logtransform of the duration variable will be used in the modeling.
+
+## Nonviolence vs democracy
+```{r}
+navc_clean$nonviol <- factor(
+  navc_clean$nonviol,
+  levels = c(0, 1),
+  labels = c("Violent", "Nonviolent")
+)
+
+ggplot(navc_clean, aes(x = nonviol, y = democracy)) +
+  geom_boxplot() +
+  labs(
+    x = "Campaign type",
+    y = "Democracy score",
+    title = "Democracy by campaign type"
+  )
+
+
+```
+### Discussion
+The boxplot compares democracy scores across violent and nonviolent campaigns. Violent campaigns exhibit a slightly higher median democracy score, while nonviolent campaigns are more concentrated in less democratic regimes. Nevertheless, both campaign types occur across the full range of democracy scores, from highly autocratic to highly democratic regimes. This descriptive evidence indicates that nonviolent campaigns are not confined to democratic settings and motivates the inclusion of democracy as a control variable, as well as potential interactions between democracy and campaign type, in the regression models.
+
+
+### Year distribution
+
+```{r}
+
+ggplot(navc_clean, aes(x = year)) +
+  geom_histogram(bins = 20) +
+  labs(title = "Distribution of campaign years", x = "Year", y = "Count")
+
+
+
+```
+### Outcome composition over time 
+```{r}
+
+navc_clean$outcome_cat <- factor(
+  navc_clean$outcome,
+  levels = c(0, 0.5, 1),
+  labels = c("failure", "partial", "success")
+)
+
+table(navc_clean$outcome_cat)
+navc_clean$decade <- factor(floor(navc_clean$year / 10) * 10) # the decade variable 
+
+table(navc_clean$decade)
+
+
+
+library(ggplot2)
+
+ggplot(navc_clean, aes(x = decade, fill = outcome_cat)) +
+  geom_bar(position = "fill") +
+  labs(
+    title = "Outcome composition by decade",
+    x = "Decade",
+    y = "Proportion",
+    fill = "Outcome"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+
+```
+### Discussion
+
+The above plot presents the composition of campaign outcomes by decade. In the early twentieth century, campaigns overwhelmingly ended in failure, with relatively few partial or full successes. Over time, the share of successful campaigns increases steadily, particularly from the mid-twentieth century onward. By the 1990s and 2000s, full success constitutes the dominant outcome. Although early decades contain fewer observations and should be interpreted cautiously, the overall pattern indicates a strong temporal component in campaign outcomes. This motivates the inclusion of year as a predictor in all regression models as it is stated in the project already.
+
+
+
+### MODELING
+
+
+```{r}
+### Key st ups for modeling
+
+# Here we will call our cleaned data version dat
+dat <- navc_clean
+View(dat)
+
+# Outcome as ordered factor for EDA/labels (not used directly in logistic)
+#dat$outcome_cat <- factor(dat$outcome,
+                          levels = c(0, 0.5, 1),
+                          labels = c("failure", "partial", "success"),
+                          ordered = TRUE)
+
+#View(dat$outcome_cat) 
+
+# Binary/categorical variables as factors for easy modeling 
+#dat$nonviol      <- factor(dat$nonviol, levels=c(0,1), labels=c("Violent","Nonviolent"))
+#dat$sanctions    <- factor(dat$sanctions, levels=c(0,1), labels=c("No","Yes"))
+#dat$aid          <- factor(dat$aid, levels=c(0,1), labels=c("No","Yes"))
+#dat$support      <- factor(dat$support, levels=c(0,1), labels=c("No","Yes"))
+#dat$viol.repress <- factor(dat$viol.repress, levels=c(0,1), labels=c("No","Yes"))
+#dat$defect       <- factor(dat$defect, levels=c(0,1), labels=c("No","Yes"))
+
+# Duration transform since the logtransform of the duration variable makes more sense
+#dat$log_duration <- log(dat$duration)
+
+# Center year (helps interpretation and reduces collinearity in interactions)
+#dat$year_c <- dat$year - mean(dat$year)
+
+#table(navc_clean$nonviol, useNA = "ifany")
+
+```
+
+
+##Robust set up for modeling
+
+```{r}
+
+# data setup
+
+# cleaned data
+dat <- navc_clean
+
+# Outcome labels (for EDA / plots)
+dat$outcome_cat <- factor(
+  dat$outcome,
+  levels = c(0, 0.5, 1),
+  labels = c("failure", "partial", "success"),
+  ordered = TRUE
+)
+
+# Factor w/ levels: "Violent", "Nonviolent"
+
+# Helper for true 0/1 binary variables
+to01factor <- function(x, labs = c("No","Yes")) {
+  x <- as.character(x)
+  x[x %in% c("0","FALSE","F")] <- "0"
+  x[x %in% c("1","TRUE","T")]  <- "1"
+  factor(x, levels = c("0","1"), labels = labs)
+}
+
+# Other binary covariates
+dat$sanctions    <- to01factor(dat$sanctions,    labs = c("No","Yes"))
+dat$aid          <- to01factor(dat$aid,          labs = c("No","Yes"))
+dat$support      <- to01factor(dat$support,      labs = c("No","Yes"))
+dat$viol.repress <- to01factor(dat$viol.repress, labs = c("No","Yes"))
+dat$defect       <- to01factor(dat$defect,       labs = c("No","Yes"))
+
+# Drop unused levels
+dat <- droplevels(dat)
+
+# Transform duration
+dat$log_duration <- log(dat$duration)
+
+# Center year
+dat$year_c <- dat$year - mean(dat$year, na.rm = TRUE)
+
+# -----------------------------
+# SANITY CHECKS
+# -----------------------------
+table(dat$nonviol, useNA = "ifany")
+
+
+```
+#GOAL 1: Compare success of nonviolent vs violent movements (Because the response has 3 levels and the project recommends logistic regressions, we will do two logistic models)
+
+
+```{r}
+#Model 1: Failure vs Not-failure
+#Define Y1=1 if outcome is zero (o), and zero if outcome is in (0.5,1) that is partial or full success
+
+# Create response
+dat$fail01 <- ifelse(dat$outcome == 0, 1, 0)
+
+
+# Base model (all predictors + year)
+m1_base <- glm(
+  fail01 ~ nonviol + year_c + democracy + log_duration +
+    sanctions + aid + support + viol.repress + defect,
+  data = dat, family = binomial(link="logit") ## Here the link function is the logit because we are modeling the binary response or our response variable follows the bernouli distribution
+)
+
+summary(m1_base)
+
+
+```
+\subsection{Model 1: Failure vs.\ Not-Failure (Logistic Regression to help answer the question whether the campaign was violent Vs nonviolent)}
+
+Model 1 uses logistic regression to predict the probability of campaign failure (failure vs.\ not-failure). Nonviolent campaigns have significantly lower odds of failure than violent campaigns ($\hat{\beta}=-1.98$, $p<0.001$), corresponding to an odds ratio of $e^{-1.98}\approx 0.14$, i.e., roughly an 86\% reduction in the odds of failure holding other factors constant. Year is also significant ($\hat{\beta}=-0.019$, $p=0.001$), implying that campaigns are less likely to fail in later historical periods (about an 18\% reduction in failure odds per decade). Democracy is negatively associated with failure ($\hat{\beta}=-0.060$, $p=0.011$), indicating that campaigns in more democratic contexts are less likely to fail. International support and security force defections further reduce the odds of failure, while sanctions, aid, and campaign duration show no detectable association with failure in this model.To more information to help us answer the question we will go ahead to do our second model.
+
+#Model 2: Full vs Partial success (conditional on not failing) this is the subset model to the outcome (0.5, 1)
+```{r}
+
+dat2 <- dat %>% filter(outcome != 0)
+
+dat2$full01 <- ifelse(dat2$outcome == 1, 1, 0)
+
+m2_base <- glm(
+  full01 ~ nonviol + year_c + democracy + log_duration +
+    sanctions + aid + support + viol.repress + defect,
+  data = dat2, family = binomial(link="logit")
+)
+
+summary(m2_base)
+exp(cbind(OR = coef(m2_base), confint(m2_base)))
+
+
+
+```
+
+\subsection{Model 2: Full vs.\ Partial Success (Conditional on Not-Failure)}
+
+Model 2 fits a logistic regression on the subset of campaigns that did not fail (outcome $\in \{0.5,1\}$), modeling the probability of full success ($1$) versus partial success ($0.5$). In this conditional model, nonviolent campaigns do not differ significantly from violent campaigns in their odds of achieving full (rather than partial) success ($\hat{\beta}=-0.307$, $p=0.536$; OR $=0.735$, 95\% CI: $[0.272,\,1.933]$). Democracy is positively associated with full success ($\hat{\beta}=0.072$, $p=0.020$), corresponding to an odds ratio of $e^{0.072}\approx 1.075$ (95\% CI: $[1.013,\,1.145]$), indicating that campaigns in more democratic contexts are more likely to convert non-failure into full success. Security force defections have a strong positive association with full success ($\hat{\beta}=1.241$, $p=0.0066$; OR $=3.46$, 95\% CI: $[1.46,\,8.89]$). Campaign duration (on the log scale) is negatively associated with full success and is marginally significant ($\hat{\beta}=-0.298$, $p=0.058$; OR $=0.742$), suggesting that longer campaigns may be more likely to stall at partial success rather than achieve full success. Year, sanctions, aid, support, and repression do not show statistically significant associations with full versus partial success in this model.
+Overall, the results support the conclusion that nonviolent resistance (the ballot) is more effective than violent resistance (the bullet) primarily because it greatly reduces the risk of outright failure. However, achieving full success rather than only partial success depends more strongly on regime type (democracy) and security force defections than on nonviolence itself. Thus, nonviolent campaigns appear especially effective at keeping movements viable and preventing defeat, while the final step from partial gains to full victory is driven by broader political conditions and security realignment.
+
+## GOAL 2: Are there other factors that affect the success of the movement? (i.e are there interaction terms that help to understand what is happening?) The goal here is to : Identify other factors + interactions that explain outcomes 
+
+
+\subsection{Goal 2: Hypothesis Testing Using Likelihood Ratio Tests}
+
+To address Goal 2, we formally test whether additional predictors or interaction terms improve model fit using likelihood ratio tests (LRTs). For each proposed interaction (or added term), two nested models are compared:
+
+\begin{itemize}
+  \item \textbf{Null (reduced) model:} the base model without the additional term.
+  \item \textbf{Alternative (full) model:} the base model augmented with the additional term(s).
+\end{itemize}
+
+\subsubsection{Hypotheses}
+
+Suppose an interaction term $Z$ is added to the model. The hypotheses tested are:
+
+\[
+H_0: \beta_Z = 0 \quad \text{(no improvement in model fit; no interaction effect)}
+\]
+
+\[
+H_A: \beta_Z \neq 0 \quad \text{(interaction improves model fit)}
+\]
+
+\subsubsection{Likelihood Ratio Test Statistic}
+
+Let $\ell_{\text{reduced}}$ and $\ell_{\text{full}}$ denote the maximized log-likelihoods of the reduced and full models, respectively. The likelihood ratio test statistic is defined as
+
+\[
+G^2 = -2\left(\ell_{\text{reduced}} - \ell_{\text{full}}\right),
+\]
+
+which, under the null hypothesis, follows an asymptotic chi-square distribution:
+
+\[
+G^2 \sim \chi^2_{df},
+\]
+
+where $df$ is the number of additional parameters included in the full model relative to the reduced model.
+
+\subsubsection{Decision Rule}
+
+The null hypothesis is rejected at significance level $\alpha$ if the observed $G^2$ exceeds the $(1-\alpha)$ quantile of the $\chi^2_{df}$ distribution, or equivalently if the LRT $p$-value is less than $\alpha$. Interactions that significantly improve model fit are retained and interpreted using predicted probabilities.
+
+
+# Step 1 We will like to confirm the already existing models from goal 1  
+```{r}
+# Model 1 (failure vs not-failure)
+m1_base <- glm(
+  fail01 ~ nonviol + year_c + democracy + log_duration +
+    sanctions + aid + support + viol.repress + defect,
+  data = dat, family = binomial()
+)
+
+# Model 2 (full vs partial among non-failures)
+m2_base <- glm(
+  full01 ~ nonviol + year_c + democracy + log_duration +
+    sanctions + aid + support + viol.repress + defect,
+  data = dat2, family = binomial()
+)
+
+```
+
+
+###A) Goal 2 for Model 1 (Failure vs Not-failure)
+# 1LRT for nonviol × democracy
+```{r}
+m1_nd <- glm(
+  fail01 ~ nonviol*democracy + year_c + log_duration +
+    sanctions + aid + support + viol.repress + defect,
+  data = dat, family = binomial() # this second model has an interaction term which is the nonviol.democracy we will then do LRT test to test our hypothesis to see if the interaction term is relevant or not
+)
+
+lrt_m1_nd <- anova(m1_base, m1_nd, test = "LRT")
+lrt_m1_nd
+
+
+```
+
+## 2) LRT for nonviol × year
+```{r}
+
+m1_ny <- glm(
+  fail01 ~ nonviol*year_c + democracy + log_duration +
+    sanctions + aid + support + viol.repress + defect,
+  data = dat, family = binomial() # The interaction term here is the nonviol.year we will now do LRT test on our hypothesis
+)
+
+lrt_m1_ny <- anova(m1_base, m1_ny, test = "LRT")
+lrt_m1_ny
+
+
+```
+
+
+#3)LRT for democracy × defect
+```{r}
+
+m1_dd <- glm(
+  fail01 ~ nonviol + year_c + log_duration +
+    sanctions + aid + support + viol.repress + democracy*defect,
+  data = dat, family = binomial() # here the interaction term is democracy.defect
+)
+
+lrt_m1_dd <- anova(m1_base, m1_dd, test = "LRT")
+lrt_m1_dd
+
+
+```
+\subsubsection{Goal 2: Interaction Tests for the Failure Model (Model 1)}
+
+To evaluate whether the effects in Model~1 vary across political context or time, likelihood ratio tests (LRTs) were used to compare the base failure model to models augmented with interaction terms. Adding the interaction between campaign type and democracy ($\text{nonviol} \times \text{democracy}$) significantly improved model fit ($\Delta G^2=4.21$, $df=1$, $p=0.040$), providing evidence that the effect of nonviolent resistance on failure depends on the level of democracy. In contrast, the interaction $\text{nonviol} \times \text{year}_c$ did not improve model fit ($\Delta G^2=0.27$, $df=1$, $p=0.605$), suggesting no evidence that the nonviolence effect changes over time after controlling for year. Similarly, the interaction $\text{democracy} \times \text{defect}$ was not supported by the data in this stage ($\Delta G^2=1.57$, $df=1$, $p=0.211$). Therefore, for the failure stage, the preferred specification retains the $\text{nonviol} \times \text{democracy}$ interaction and excludes the other tested interactions.
+
+
+```{r}
+
+summary(m1_nd)
+
+
+```
+\subsubsection{Goal 2 Result (Model 1): Interaction Between Nonviolence and Democracy}
+
+Based on likelihood ratio testing, the interaction $\text{nonviol} \times \text{democracy}$ was retained in the failure model because it significantly improved model fit relative to the base specification ($\Delta G^2=4.21$, $df=1$, $p=0.040$). The fitted model implies that the effect of democracy on failure differs by campaign type: for violent campaigns the democracy slope is $\hat{\beta}_2=-0.040$, whereas for nonviolent campaigns it is $\hat{\beta}_2+\hat{\beta}_3=-0.040-0.152=-0.192$, indicating a much stronger failure-reducing effect of democracy for nonviolent movements. Equivalently, the effect of nonviolence on failure depends on democracy through $\Delta(d)=\hat{\beta}_1+\hat{\beta}_3 d=-2.644-0.152d$, so the nonviolent advantage (lower failure odds) increases as democracy rises. For example, at democracy $d=0$, the odds ratio comparing nonviolent to violent campaigns is $e^{-2.644}\approx 0.07$, while at $d=10$ it is $e^{-4.165}\approx 0.02$, implying an even larger reduction in failure odds in highly democratic settings. Year and security-force defections remain significant predictors of failure in this interaction model.
+
+
+
+
+
+
+## B) Goal 2 for Model 2 (Full vs Partial)
+#1) LRT for nonviol × democracy
+```{r}
+m2_nd <- glm(
+  full01 ~ nonviol*democracy + year_c + log_duration +
+    sanctions + aid + support + viol.repress + defect,
+  data = dat2, family = binomial() # in this model the interaction term is nonviol.democracy
+)
+
+lrt_m2_nd <- anova(m2_base, m2_nd, test = "LRT")
+lrt_m2_nd
+
+```
+
+## 2) LRT for democracy × defect
+```{r}
+
+m2_dd <- glm(
+  full01 ~ nonviol + year_c + log_duration +
+    sanctions + aid + support + viol.repress + democracy*defect,
+  data = dat2, family = binomial() # the interaction term in this model is democracy.defect
+)
+
+lrt_m2_dd <- anova(m2_base, m2_dd, test = "LRT")
+lrt_m2_dd
+
+
+```
+#Put all LRT results into one clean table for easy report
+```{r}
+lrt_table <- function(lrt_obj, label){
+  data.frame(
+    Test = label,
+    Df = lrt_obj$Df[2],
+    Deviance = lrt_obj$Deviance[2],
+    p_value = lrt_obj$`Pr(>Chi)`[2]
+  )
+}
+
+LRT_results <- rbind(
+  lrt_table(lrt_m1_nd, "Model 1: add nonviol × democracy"),
+  lrt_table(lrt_m1_ny, "Model 1: add nonviol × year"),
+  lrt_table(lrt_m1_dd, "Model 1: add democracy × defect"),
+  lrt_table(lrt_m2_nd, "Model 2: add nonviol × democracy"),
+  lrt_table(lrt_m2_dd, "Model 2: add democracy × defect")
+)
+
+LRT_results
+
+
+```
+
+
+```{r}
+demo_vals <- seq(-10, 10, by = 1)
+
+G <- expand.grid(
+  nonviol = levels(dat$nonviol),
+  democracy = demo_vals,
+  year_c = 0,
+  log_duration = mean(dat$log_duration, na.rm=TRUE),
+  sanctions = "No",
+  aid = "No",
+  support = "No",
+  viol.repress = "Yes",
+  defect = "No"
+)
+
+G$pred_fail <- predict(m1_nd, newdata = G, type = "response")
+
+library(ggplot2)
+ggplot(G, aes(x = democracy, y = pred_fail, color = nonviol)) +
+  geom_line(linewidth = 1) +
+  labs(title="Predicted P(Failure) vs Democracy by Campaign Type (M1)",
+       y="Predicted P(Failure)", x="Democracy score")
+
+
+
+```
+
+\subsubsection{"Predicted P(Failure) vs Democracy by Campaign Type (M1)"}
+
+The above plot displays predicted probabilities of campaign failure as a function of democracy for violent and nonviolent campaigns based on the interaction model. Nonviolent campaigns exhibit substantially lower failure probabilities than violent campaigns across the entire range of democracy scores. Moreover, the gap between violent and nonviolent campaigns widens as democracy increases. While higher democracy is associated with only modest reductions in failure probability for violent campaigns, it dramatically reduces the probability of failure for nonviolent campaigns, with predicted failure probabilities approaching zero in highly democratic contexts. This pattern confirms the likelihood ratio test result and indicates that democracy strongly amplifies the effectiveness of nonviolent resistance, providing evidence that the impact of campaign type on failure is conditional on political regime type.
+
+\subsubsection{Goal 2: Interaction Tests for the Full-vs-Partial Model (Model 2)}
+
+Likelihood ratio tests were used to evaluate whether interaction terms improve the conditional model distinguishing full success from partial success among campaigns that did not fail. Adding the interaction $\text{nonviol} \times \text{democracy}$ did not significantly improve model fit ($\Delta G^2=0.93$, $df=1$, $p=0.334$), indicating no evidence that democracy modifies the relationship between campaign type and achieving full (rather than partial) success once failure is avoided. Similarly, the interaction $\text{democracy} \times \text{defect}$ was not supported ($\Delta G^2=0.67$, $df=1$, $p=0.412$). Therefore, for the second-stage model, the preferred specification retains main effects only, without additional interaction terms.
+
+
+\subsection{Goal 2 Synthesis: When and Why Do Campaigns Succeed?}
+
+Goal 2 examined whether the relationships identified in Goal 1 vary across political context and time by testing interaction terms using likelihood ratio tests (LRTs). For the first-stage model predicting outright failure versus not-failure, the interaction between campaign type and democracy ($\text{nonviol} \times \text{democracy}$) significantly improved model fit. This provides evidence that the comparative advantage of nonviolent campaigns is not constant across regimes: the predicted probability curves show that nonviolent campaigns are less likely to fail across all democracy scores, but the gap between nonviolent and violent campaigns widens in more democratic contexts, where nonviolent campaigns become extremely unlikely to fail. In contrast, the interaction between campaign type and year ($\text{nonviol} \times \text{year}_c$) was not supported, suggesting that after controlling for year as a main effect, there is no evidence that the nonviolence effect on failure changes systematically over time. Likewise, the interaction $\text{democracy} \times \text{defect}$ did not improve fit in the failure model.
+
+For the second-stage model distinguishing full success from partial success among campaigns that did not fail, neither $\text{nonviol} \times \text{democracy}$ nor $\text{democracy} \times \text{defect}$ improved model fit. Thus, once campaigns avoid outright failure, the data do not provide evidence that democracy systematically modifies the effect of campaign type or defections on converting partial gains into full success. Overall, the interaction results support a two-stage interpretation of campaign outcomes: democracy conditions the extent to which nonviolent resistance reduces the likelihood of failure, whereas the determinants of achieving full versus partial success operate more uniformly across regime types in the conditional (non-failure) stage.
+
+
+## BAYESIAN ANALYSIS 
+\subsection{Bayesian Analysis}
+
+As a robustness check, the final frequentist models were re-estimated within a Bayesian framework using logistic regression with weakly informative normal priors on all regression coefficients. The Bayesian failure model includes the interaction between campaign type and democracy identified via likelihood ratio testing. 
+
+Do the substantive conclusions change when we move from likelihood-based inference to Bayesian inference?
+
+### choosing Prior distribution 
+```{r}
+
+x <- seq(-10, 10, length.out = 1000)
+prior_df <- data.frame(
+  beta = x,
+  density = dnorm(x, mean = 0, sd = 2.5)
+)
+
+ggplot(prior_df, aes(x = beta, y = density)) +
+  geom_line(linewidth = 1) +
+  labs(
+    title = "Weakly informative prior for logistic regression coefficients",
+    x = expression(beta),
+    y = "Density"
+  ) +
+  theme_minimal()
+
+```
+## Priors on odd ratio scale
+```{r}
+prior_df$OR <- exp(prior_df$beta)
+
+ggplot(prior_df, aes(x = OR, y = density)) +
+  geom_line(linewidth = 1) +
+  scale_x_log10() +
+  labs(
+    title = "Implied prior on odds ratio scale",
+    x = "Odds Ratio (log scale)",
+    y = "Density"
+  ) +
+  theme_minimal()
+
+
+```
+## Discussion on prior plots
+To assess the informativeness of the prior distributions, the above plots displays the weakly informative normal prior used for logistic regression coefficients on the log-odds scale and its implied distribution on the odds ratio scale. Both plots show that the prior is centered at zero (odds ratio equal to one) and allows for a wide range of plausible effect sizes, confirming that the Bayesian analysis is driven primarily by the data rather than strong prior assumptions.
+
+
+
+```{r}
+
+library(rstanarm)
+
+# Bayesian Model 1 (with interaction)
+b1 <- stan_glm(
+  fail01 ~ nonviol * democracy + year_c + log_duration +
+    sanctions + aid + support + viol.repress + defect,
+  data = dat,
+  family = binomial(link = "logit"),
+  prior = normal(0, 2.5), # we use week normal informative prior, this works because it Centers effects at 0,Allows large effects if data support them, it is also recommended (Gelman et al 2014.)
+  prior_intercept = normal(0, 5),
+  chains = 4, iter = 4000, warmup = 2000, seed = 123
+)
+
+print(b1, digits = 2)
+posterior_interval(b1, prob = 0.95)
+
+``` 
+## Exact probabilities
+```{r}
+post <- as.matrix(b1)
+mean(post[, "nonviolNonviolent"] < 0)
+mean(post[, "nonviolNonviolent:democracy"] < 0) ## Interaction term
+post <- as.matrix(b1)
+
+## Diagnostics check
+plot(b1)     # trace + density
+
+#print(b1, digits = 3)
+summary(b1, digits = 3)
+
+summary(b1)
+
+
+
+```
+
+
+
+\subsection{Bayesian Robustness Check: Failure Model}
+
+As a robustness check, the final failure model— including the $\text{nonviol} \times \text{democracy}$ interaction retained by the likelihood ratio test was re-estimated using Bayesian logistic regression with weakly informative normal priors. The Bayesian results are substantively consistent with the likelihood-based analysis. The posterior median for the nonviolence coefficient is $-2.69$, with a 95\% credible interval of $[-4.08,\,-1.66]$, providing strong evidence that nonviolent campaigns have substantially lower odds of failure than violent campaigns, holding other covariates fixed. Democracy is also negatively associated with failure for the reference (violent) campaigns, with posterior median $-0.041$, indicating lower failure risk in more democratic contexts.
+
+Importantly, the interaction between nonviolence and democracy has posterior median $-0.16$ and a 95\% credible interval of $[-0.35,\,-0.01]$, indicating that the failure-reducing advantage of nonviolent campaigns increases as democracy rises. This Bayesian interaction result supports  the likelihood ratio test and the predicted-probability analysis, which show a widening gap in failure risk between violent and nonviolent campaigns as democratic conditions improve. Posterior medians for year and security-force defections are also negative, supporting their roles in reducing the probability of campaign failure.
+
+Markov chain Monte Carlo diagnostics indicate excellent convergence and stable posterior estimation. All parameters have split-chain potential scale reduction factors of $\hat{R}=1.000$, effective sample sizes in the thousands, and negligible Monte Carlo standard error, indicating good chain mixing and reliable posterior summaries.
+
+# Fit Bayesian Model 2 (no interactions, since LRT said none needed)
+```{r}
+
+
+
+# Bayesian Model 2: Full vs Partial among non-failures (dat2)
+b2 <- stan_glm(
+  full01 ~ nonviol + year_c + democracy + log_duration +
+    sanctions + aid + support + viol.repress + defect,
+  data = dat2,
+  family = binomial(link = "logit"), ## This is the model that has no interaction effect terms 
+  prior = normal(0, 2.5),
+  prior_intercept = normal(0, 5),
+  chains = 4, iter = 4000, warmup = 2000, seed = 123
+)
+
+
+
+```
+## Posterior summary
+
+```{r}
+
+## Posterior summary for b2
+print(b2, digits = 3)
+posterior_interval(b2, prob = 0.95)
+summary(b2, digits = 3)
+
+
+```
+## MCMC Diagnostics for b2
+```{r}
+
+### MCMC Diagnostics
+plot(b2)
+
+
+```
+
+## Posterior probabilities
+```{r}
+post2 <- as.matrix(b2)
+
+# P(effect > 0 | data)
+mean(post2[, "democracy"] > 0)
+mean(post2[, "defectYes"] > 0)
+
+# check nonviolence effect direction
+mean(post2[, "nonviolNonviolent"] > 0)
+
+
+```
+\subsection{Bayesian Robustness Check: Full vs Partial Success Model}
+
+To complement the likelihood-based second-stage analysis, the full-versus-partial success model (restricted to campaigns that did not fail) was re-estimated using Bayesian logistic regression with weakly informative priors and no interaction terms, consistent with the likelihood ratio test results for this stage. Posterior summaries indicate limited evidence that campaign type (nonviolent versus violent) meaningfully differentiates full success from partial success once outright failure is avoided: the posterior median for the nonviolence coefficient is $-0.336$ with a 95\% credible interval of $[-1.310,\ 0.660]$, and $P(\beta_{\text{nonviol}}>0\mid \text{data})=0.249$. 
+
+In contrast, democratic context and security force defections show strong and positive posterior evidence for achieving full success. Democracy has posterior median $0.078$ with a 95\% credible interval of $[0.015,\ 0.140]$ and $P(\beta_{\text{democracy}}>0\mid \text{data})=0.992$, implying that more democratic environments increase the probability of full success among non-failing campaigns. Defections have posterior median $1.294$ with a 95\% credible interval of $[0.430,\ 2.252]$ and $P(\beta_{\text{defect}}>0\mid \text{data})=0.999$, indicating that defections substantially increase the likelihood of full success. Additionally, log-duration is negative with a 95\% credible interval excluding zero, suggesting that longer-lasting campaigns are less likely to convert partial gains into full success conditional on not failing.
+
+Markov chain Monte Carlo diagnostics indicate stable estimation, with $\hat{R}\approx 1.00$ for all parameters and effective sample sizes in the thousands, supporting reliable posterior inference. Overall, the Bayesian second-stage results is in line with the likelihood-based conclusion that nonviolence primarily reduces the risk of outright failure, whereas democracy and defections are more decisive for attaining full rather than partial success among campaigns that avoid failure.
+
+
+\paragraph{Conclusion from Bayesian Analysis.}
+The Bayesian robustness checks confirm that the substantive conclusions drawn from the likelihood-based analysis are not sensitive to the inferential framework. Posterior estimates and credible intervals consistently indicate that nonviolent campaigns primarily reduce the risk of outright failure, but do not meaningfully increase the probability of achieving full rather than partial success once failure is avoided. In contrast, democratic context and security-force defections emerge as robust predictors of full success among non-failing campaigns, with posterior probabilities strongly favoring positive effects. The stability of posterior inference, supported by excellent MCMC diagnostics, reinforces the conclusion that the determinants of campaign survival differ from those governing the conversion of partial success into full success.
+
+
+\subsection{Overal Results and Conclusions}
+
+Across both likelihood-based and Bayesian analyses, the results provide a consistent and coherent account of how campaign characteristics and political context shape campaign outcomes. Logistic regression models indicate that nonviolent campaigns are substantially less likely to fail than violent campaigns, even after controlling for historical period, regime type, campaign duration, international involvement, and internal dynamics. This failure-reducing advantage of nonviolent campaigns is amplified in more democratic contexts, as evidenced by a statistically supported interaction between nonviolence and democracy in the failure model.
+
+However, among campaigns that avoid outright failure, nonviolence does not significantly increase the probability of achieving full rather than partial success. Instead, democratic context and security-force defections emerge as the most robust determinants of full success conditional on survival. Campaigns operating in more democratic environments and those experiencing defections are substantially more likely to convert partial gains into complete success, while longer campaign duration is associated with reduced likelihood of full success.
+
+Bayesian robustness checks supports  these findings, with posterior medians, credible intervals, and directional probabilities closely aligning with the likelihood-based results. In particular, Bayesian inference confirms that nonviolence primarily operates as a survival mechanism rather than a decisive factor in escalating partial success to full success, while democracy and defections play a central role in determining ultimate campaign outcomes. Together, these results support a two-stage interpretation of campaign success: nonviolence reduces the risk of failure, whereas political context and elite behavior determine whether surviving campaigns achieve full success.
+
+
+
+
+
+
